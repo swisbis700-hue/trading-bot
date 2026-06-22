@@ -1,0 +1,4 @@
+flask
+pybit
+requests
+gunicorn
