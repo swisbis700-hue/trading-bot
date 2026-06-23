@@ -5,7 +5,6 @@ import requests
 import pybit.unified_trading
 from flask import Flask
 
-# ==================== الإعدادات ====================
 API_KEY    = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
 BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -13,24 +12,21 @@ CHAT_ID    = os.environ.get("TELEGRAM_CHAT_ID")
 
 SYMBOL      = "BTCUSDT"
 QTY         = "0.001"
-INTERVAL    = "60"
-CHECK_EVERY = 60
+INTERVAL    = "1"
+CHECK_EVERY = 30
 
-# ==================== Flask ====================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
     return "Bot is running!"
 
-# ==================== Bybit ====================
 session = pybit.unified_trading.HTTP(
     testnet=False,
     api_key=API_KEY,
     api_secret=API_SECRET,
 )
 
-# ==================== Telegram ====================
 def send_telegram(msg):
     try:
         requests.get(
@@ -41,8 +37,7 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# ==================== جلب الشموع من Bybit ====================
-def get_candles(symbol="BTCUSDT", interval="60", limit=100):
+def get_candles(symbol="BTCUSDT", interval="1", limit=100):
     url = "https://api.bybit.com/v5/market/kline"
     params = {
         "category": "linear",
@@ -63,7 +58,6 @@ def get_candles(symbol="BTCUSDT", interval="60", limit=100):
         print(f"Bybit candles error: {e}")
         return [], [], []
 
-# ==================== المؤشرات ====================
 def ema(values, period):
     k = 2 / (period + 1)
     result = [values[0]]
@@ -97,7 +91,6 @@ def atr(highs, lows, closes, period=14):
         trs.append(tr)
     return sum(trs[-period:]) / period if len(trs) >= period else 0
 
-# ==================== الإشارة ====================
 def check_signal(closes, highs, lows):
     if len(closes) < 60:
         return None
@@ -120,7 +113,6 @@ def check_signal(closes, highs, lows):
         return {"signal": "SELL", "price": price, "sl": round(sl, 2), "tp": round(tp, 2), "rsi": round(rsi_val, 1)}
     return None
 
-# ==================== الأوردر ====================
 def place_order(side):
     try:
         result = session.place_order(
@@ -135,10 +127,9 @@ def place_order(side):
         print(f"Order error: {e}")
         return None
 
-# ==================== الحلقة الرئيسية ====================
 def bot_loop():
-    print("🤖 البوت شغال...")
-    send_telegram("🤖 البوت بدأ - يراقب " + SYMBOL)
+    print("Bot started...")
+    send_telegram("🤖 البوت بدأ - يراقب " + SYMBOL + " على الدقيقة")
     last_signal = None
     while True:
         try:
@@ -151,26 +142,25 @@ def bot_loop():
                     sl = signal["sl"]
                     tp = signal["tp"]
                     rsi_val = signal["rsi"]
-                    print(f"📡 {sig} | {price} | SL:{sl} | TP:{tp}")
+                    print(f"{sig} | {price} | SL:{sl} | TP:{tp}")
                     side = "Buy" if sig == "BUY" else "Sell"
                     result = place_order(side)
                     if result:
                         msg = (
-                            f"{'🟢' if sig == 'BUY' else '🔴'} إشارة {sig}\n"
+                            f"{'🟢' if sig == 'BUY' else '🔴'} {sig}\n"
                             f"💰 السعر: {price}\n"
-                            f"🛑 وقف الخسارة: {sl}\n"
-                            f"🎯 الهدف: {tp}\n"
+                            f"🛑 SL: {sl}\n"
+                            f"🎯 TP: {tp}\n"
                             f"📊 RSI: {rsi_val}"
                         )
                         send_telegram(msg)
                         last_signal = sig
                     else:
-                        send_telegram(f"⚠️ فشل تنفيذ {sig}")
+                        send_telegram(f"فشل {sig}")
         except Exception as e:
             print(f"Error: {e}")
         time.sleep(CHECK_EVERY)
 
-# ==================== التشغيل ====================
 thread = threading.Thread(target=bot_loop)
 thread.daemon = True
 thread.start()
