@@ -2,17 +2,16 @@ import time
 import os
 import threading
 import requests
-import pybit.unified_trading
 from flask import Flask
 
-API_KEY    = os.environ.get("BYBIT_API_KEY")
-API_SECRET = os.environ.get("BYBIT_API_SECRET")
+API_KEY    = os.environ.get("MEXC_API_KEY")
+API_SECRET = os.environ.get("MEXC_API_SECRET")
 BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID    = os.environ.get("TELEGRAM_CHAT_ID")
 
 SYMBOL      = "BTCUSDT"
-QTY         = "0.001"
-INTERVAL    = "1"
+QTY         = "0.00001"
+INTERVAL    = "1m"
 CHECK_EVERY = 30
 
 app = Flask(__name__)
@@ -20,12 +19,6 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return "Bot is running!"
-
-session = pybit.unified_trading.HTTP(
-    testnet=False,
-    api_key=API_KEY,
-    api_secret=API_SECRET,
-)
 
 def send_telegram(msg):
     try:
@@ -37,10 +30,9 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def get_candles(symbol="BTCUSDT", interval="1", limit=100):
-    url = "https://api.bybit.com/v5/market/kline"
+def get_candles(symbol="BTCUSDT", interval="1m", limit=100):
+    url = "https://api.mexc.com/api/v3/klines"
     params = {
-        "category": "linear",
         "symbol": symbol,
         "interval": interval,
         "limit": limit
@@ -48,14 +40,12 @@ def get_candles(symbol="BTCUSDT", interval="1", limit=100):
     try:
         res = requests.get(url, params=params, timeout=10)
         data = res.json()
-        candles = data["result"]["list"]
-        candles = list(reversed(candles))
-        closes = [float(c[4]) for c in candles]
-        highs  = [float(c[2]) for c in candles]
-        lows   = [float(c[3]) for c in candles]
+        closes = [float(c[4]) for c in data]
+        highs  = [float(c[2]) for c in data]
+        lows   = [float(c[3]) for c in data]
         return closes, highs, lows
     except Exception as e:
-        print(f"Bybit candles error: {e}")
+        print(f"MEXC candles error: {e}")
         return [], [], []
 
 def ema(values, period):
@@ -114,22 +104,37 @@ def check_signal(closes, highs, lows):
     return None
 
 def place_order(side):
+    import hmac
+    import hashlib
+    from urllib.parse import urlencode
+
+    timestamp = str(int(time.time() * 1000))
+    params = {
+        "symbol": SYMBOL,
+        "side": side,
+        "type": "MARKET",
+        "quantity": QTY,
+        "timestamp": timestamp
+    }
+    query = urlencode(params)
+    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    params["signature"] = signature
+
     try:
-        result = session.place_order(
-            category="linear",
-            symbol=SYMBOL,
-            side=side,
-            orderType="Market",
-            qty=QTY
+        res = requests.post(
+            "https://api.mexc.com/api/v3/order",
+            params=params,
+            headers={"X-MEXC-APIKEY": API_KEY},
+            timeout=10
         )
-        return result
+        return res.json()
     except Exception as e:
         print(f"Order error: {e}")
         return None
 
 def bot_loop():
     print("Bot started...")
-    send_telegram("🤖 البوت بدأ - يراقب " + SYMBOL + " على الدقيقة")
+    send_telegram("🤖 البوت بدأ - يراقب BTCUSDT على MEXC")
     last_signal = None
     while True:
         try:
@@ -143,9 +148,9 @@ def bot_loop():
                     tp = signal["tp"]
                     rsi_val = signal["rsi"]
                     print(f"{sig} | {price} | SL:{sl} | TP:{tp}")
-                    side = "Buy" if sig == "BUY" else "Sell"
+                    side = "BUY" if sig == "BUY" else "SELL"
                     result = place_order(side)
-                    if result:
+                    if result and "orderId" in result:
                         msg = (
                             f"{'🟢' if sig == 'BUY' else '🔴'} {sig}\n"
                             f"💰 السعر: {price}\n"
@@ -156,7 +161,7 @@ def bot_loop():
                         send_telegram(msg)
                         last_signal = sig
                     else:
-                        send_telegram(f"فشل {sig}")
+                        send_telegram(f"⚠️ فشل {sig}: {result}")
         except Exception as e:
             print(f"Error: {e}")
         time.sleep(CHECK_EVERY)
